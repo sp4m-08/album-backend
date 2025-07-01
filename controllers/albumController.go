@@ -6,6 +6,7 @@ import (
 
 	"rest/database"
 	"rest/models"
+	"rest/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -46,33 +47,85 @@ func GetAlbumByID(c *gin.Context) {
 }
 
 func PostAlbum(c *gin.Context) {
-	var newAlbum models.Album
 
-	//fetch request body
-	if err := c.BindJSON(&newAlbum); err != nil {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid request body"})
+	title := c.PostForm("title")
+	artist := c.PostForm("artist")
+	priceStr := c.PostForm("price")
+
+	price, err := strconv.ParseFloat(priceStr, 64)
+
+	if err != nil {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"error": "Invalid Price"})
+		return
+	}
+	fileHeader, err := c.FormFile("image")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Image file is required"})
 		return
 	}
 
-	// for _, a := range models.Albums {
-	// 	if a.Title == newAlbum.Title && a.Artist == newAlbum.Artist {
-	// 		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "album already exists"})
-	// 		return
-	// 	}
-	// }
+	file, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open file"})
+		return
+	}
+	defer file.Close()
 
-	var existing models.Album //check if album with same details are already present
-	result := database.DB.Where("title = ? AND artist= ?", newAlbum.Title, newAlbum.Artist).First(&existing)
-	if result.RowsAffected > 0 {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "album already exists"})
+	imageURL, err := utils.UploadFileToS3(file, fileHeader, title+"-"+artist)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
-	//create album with new details
+	var existingAlbum models.Album
+	result := database.DB.Where("title =? AND artist=?", title, artist).First(&existingAlbum)
+	if result.RowsAffected > 0 {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"error": "album already exists"})
+		return
+	}
+
+	newAlbum := models.Album{
+		Title:    title,
+		Artist:   artist,
+		Price:    price,
+		ImageURL: imageURL,
+	} //since we using form body
+
 	if err := database.DB.Create(&newAlbum).Error; err != nil {
 		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.IndentedJSON(http.StatusCreated, newAlbum) //send in response
+
+	c.IndentedJSON(http.StatusOK, newAlbum)
+
+	//below is without image context
+	// var newAlbum models.Album
+
+	// //fetch request body
+	// if err := c.BindJSON(&newAlbum); err != nil {
+	// 	c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid request body"})
+	// 	return
+	// }
+
+	// // for _, a := range models.Albums {
+	// // 	if a.Title == newAlbum.Title && a.Artist == newAlbum.Artist {
+	// // 		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "album already exists"})
+	// // 		return
+	// // 	}
+	// // }
+
+	// var existing models.Album //check if album with same details are already present
+	// result := database.DB.Where("title = ? AND artist= ?", newAlbum.Title, newAlbum.Artist).First(&existing)
+	// if result.RowsAffected > 0 {
+	// 	c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "album already exists"})
+	// }
+
+	// //create album with new details
+	// if err := database.DB.Create(&newAlbum).Error; err != nil {
+	// 	c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// 	return
+	// }
+	// c.IndentedJSON(http.StatusCreated, newAlbum) //send in response
 }
 
 func UpdateAlbumByID(c *gin.Context) {
@@ -88,15 +141,47 @@ func UpdateAlbumByID(c *gin.Context) {
 		return
 	}
 
-	var updatedAlbum models.Album
-	if err := c.BindJSON(&updatedAlbum); err != nil {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid body"})
+	// var updatedAlbum models.Album //for json body, now we are sending form body
+	// if err := c.BindJSON(&updatedAlbum); err != nil {
+	// 	c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid body"})
+	// 	return
+	// }
+
+	title := c.PostForm("title")
+	artist := c.PostForm("artist")
+	priceStr := c.PostForm("price") //form data parsing
+
+	price, err := strconv.ParseFloat(priceStr, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid price"})
 		return
 	}
 
-	album.Title = updatedAlbum.Title
-	album.Artist = updatedAlbum.Artist
-	album.Price = updatedAlbum.Price
+	album.Title = title
+	album.Artist = artist
+	album.Price = price
+
+	fileHeader, err := c.FormFile("image")
+	if err == nil {
+		file, err := fileHeader.Open()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open uploaded image"})
+			return
+		}
+		defer file.Close()
+
+		imageURL, err := utils.UploadFileToS3(file, fileHeader, title+"-"+artist)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload new image"})
+			return
+		}
+		album.ImageURL = imageURL
+	}
+
+	if err := database.DB.Save(&album).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	database.DB.Save(&album)
 	c.IndentedJSON(http.StatusOK, album)
