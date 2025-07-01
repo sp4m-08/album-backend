@@ -40,7 +40,7 @@ func UploadFileToS3(file multipart.File, fileHeader *multipart.FileHeader, key s
 		Key:         aws.String(key),
 		Body:        bytes.NewReader(buffer.Bytes()),
 		ContentType: aws.String(contentType),
-		//ACL:         types.ObjectCannedACLPublicRead, // make public
+		//ACL:         types.ObjectCannedACLPublicRead, // make public --> no need of acl policy 
 	})
 	if err != nil {
 		return "", err
