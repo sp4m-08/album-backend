@@ -31,5 +31,8 @@ Thumbs.db
 *.log
 *.tmp
 
+# .gitignore
+.env
+
 # Application binary (if you build with `go build`)
 rest
